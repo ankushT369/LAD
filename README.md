@@ -1,1 +1,1 @@
-# LAD Project
+# Logs Anomalies Detector

@@ -1,14 +1,2 @@
-# Logs Anomalies Detector
-
-```
-lad
-├── config/
-├── daemon/    
-│   
-│   
-├── frontend/ 
-├── docs/
-├── consumer/
-├── scripts/
-└── tests/
-```
+# Log Anomaly Detector
+Log Anomaly Detector (LAD): Real-time system for semantic log monitoring and anomaly detection using Rust, Python, and Qdrant.

@@ -1,0 +1,6 @@
+# Config.yaml file contains the log file paths.
+
+logs:
+  - /var/log/syslog
+  - /var/log/postgresql/postgresql-14-main.log
+  - /var/log/hpcr/hpcr.cognitive.local.ankush.log.INFO.20250907-015150.171905

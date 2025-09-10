@@ -6,6 +6,8 @@ import os
 import sys
 from inotify_simple import INotify, flags
 
+from fluent import sender, event
+
 def load_config(config_path):
     with open(config_path, "r") as f:
         data = yaml.safe_load(f)
@@ -29,6 +31,11 @@ def follow_logs(config_path):
         print("No log files found in config.")
         return
 
+    # setup fluentd logger (read from config.yaml)
+    data = yaml.safe_load(open(config_path))
+    host, port = data.get("host", ["127.0.0.1", 24224])
+    sender.setup("myapp", host=host, port=int(port))
+
     inotify = INotify()
     watch_flags = flags.MODIFY
 
@@ -41,11 +48,16 @@ def follow_logs(config_path):
 
     print("Watching logs... (Ctrl+C to exit)")
     while True:
-        for event in inotify.read():
-            path, fd = wd_map[event.wd]
-            if flags.MODIFY in flags.from_mask(event.mask):
+        for event_ in inotify.read():
+            path, fd = wd_map[event_.wd]
+            if flags.MODIFY in flags.from_mask(event_.mask):
                 for line in fd:
-                    print(f"[{path}] {line}", end="")
+                    log_line = line.strip()
+                    if log_line:
+                        # Send to fluentd
+                        event.Event("log", {"file": path, "message": log_line})
+                        print(f"Sent to Fluentd: [{path}] {log_line}")
+
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:

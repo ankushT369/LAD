@@ -1,4 +1,5 @@
 .env
+
 # Logs
 *.log
 *.log.*
@@ -10,4 +11,3 @@ __pycache__/
 
 # Images (if not needed in repo)
 *.webp
-

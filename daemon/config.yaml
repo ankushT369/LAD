@@ -2,9 +2,8 @@
 
 logs:
   - /var/log/syslog
-  - /var/log/postgresql/postgresql-14-main.log
+  - /var/log/postgresql/postgresql-15-main.log
 
 host:
   - 127.0.0.1
   - 24224
-

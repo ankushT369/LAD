@@ -664,3 +664,4 @@
 2025-09-16T10:55:01+00:00	myapp.log	{"file":"/var/log/syslog","message":"2025-09-16T16:25:01.297078+05:30 debian CRON[6338]: (root) CMD (command -v debian-sa1 > /dev/null && debian-sa1 1 1)"}
 2025-09-16T10:55:20+00:00	myapp.log	{"file":"/var/log/syslog","message":"2025-09-16T16:25:20.033430+05:30 debian kernel: [ 2077.698563] [UFW BLOCK] IN=wlo1 OUT= MAC=01:00:5e:00:00:01:f0:ed:b8:67:d3:6b:08:00 SRC=192.168.29.1 DST=224.0.0.1 LEN=36 TOS=0x00 PREC=0xC0 TTL=1 ID=40530 PROTO=2"}
 2025-09-16T10:55:40+00:00	myapp.log	{"file":"/var/log/syslog","message":"2025-09-16T16:25:40.109567+05:30 debian kernel: [ 2097.769585] [UFW BLOCK] IN=wlo1 OUT= MAC=01:00:5e:00:00:01:f0:ed:b8:67:d3:6b:08:00 SRC=192.168.29.1 DST=224.0.0.1 LEN=36 TOS=0x00 PREC=0xC0 TTL=1 ID=40634 PROTO=2"}
+2025-09-16T12:07:05+00:00	fluent.info	{"worker":0,"message":"fluentd worker is now stopping worker=0"}

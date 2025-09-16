@@ -11,14 +11,26 @@ if __name__ == "__main__":
     vector_store = get_vectorstore(client, collection_name)
     chain = get_rag_chain()
 
-    print("\nEnter your search query (or 'exit' to quit):")
+    #print("\nEnter your search query (or 'exit' to quit):")
 
     while True:
+        # trail logs from /logs/data.logs/buffer.b63ee8992fa810b15153db132100359bf.log
+        fobj = open("../daemon/logs/data.log/buffer.b63ee8992fa810b15153db132100359bf.log", "r")
+        query = fobj.readline()
+
+        # later
+        if query.lower() in {"exit", "quit"}:
+            break
+        if not query:
+            continue
+
+        """
         query = input("\nQuery: ").strip()
         if query.lower() in {"exit", "quit"}:
             break
         if not query:
             continue
+        """
 
         # retrieve
         results = vector_store.similarity_search_with_score(query, k=3)

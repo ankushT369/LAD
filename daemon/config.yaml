@@ -1,6 +1,7 @@
 # Config.yaml file contains the log file paths.
 
 logs:
+  - /var/log/syslog
   - /var/log/postgresql/postgresql-15-main.log
 
 host:

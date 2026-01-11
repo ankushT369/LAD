@@ -4,6 +4,7 @@ logs:
   - /var/log/syslog
   - /var/log/postgresql/postgresql-15-main.log
 
-host:
-  - 127.0.0.1
-  - 24224
+fluentd:
+  host: 127.0.0.1
+  port: 24224
+

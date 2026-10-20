@@ -1,10 +1,13 @@
 # ingest_apache.py
-import os
+from pathlib import Path
 from client import qdrant_client, create_collection
 from vectorstore import get_vectorstore
 from text_utils import chunk_text
 
-def ingest_logs(file_path="Apache_2k.log", collection_name="apache_logs_collection"):
+DEFAULT_LOG_FILE = Path(__file__).resolve().parent.parent / "data" / "sample_logs" / "Apache_2k.log"
+
+
+def ingest_logs(file_path=DEFAULT_LOG_FILE, collection_name="apache_logs_collection"):
     client = qdrant_client()
     collection_name = create_collection(client, collection_name)
     vector_store = get_vectorstore(client, collection_name)

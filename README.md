@@ -5,6 +5,8 @@ Log Anomaly Detector (LAD): Real-time system for semantic log monitoring and ano
 
 Real-time log monitoring & semantic anomaly detection using Fluentd, Qdrant, and Google Gemini embeddings.
 
+![Vector embedding search diagram](docs/assets/vector-embedding-search.webp)
+
 ---
 
 LAD helps you continuously monitor log files and detect anomalies (errors, warnings, unusual behavior) by:
@@ -21,27 +23,30 @@ LAD helps you continuously monitor log files and detect anomalies (errors, warni
 
 ```
 LAD/
-├── daemon/ # Fluentd config, log buffer setup, log file watcher
-│ ├── config.yaml
-│ ├── fluent.conf
-│ ├── docker_run
-│ ├── logs/
-│ ├── data.log/
-│ ├ buffer..log
-│ └ buffer..log.meta
-│ └ historical logs (rotated)
-│ └ daemon.py
-├── scripts/ # Core Python scripts
-│ ├── client.py
-│ ├── vectorstore.py
-│ ├── text_utils.py
-│ ├── rag_chain.py
-│ └ main.py # Anomaly detection loop
-├── config/ # Additional configuration if any
-├── tests/ # Unit / integration tests
-├── Apache_2k.log # Sample logs
-├── Windows_2k.log # Sample logs
-├── operate.sh # Orchestration script to spin up Fluentd, run main, clean up
+├── data/
+│   └── sample_logs/          # Apache and Windows sample datasets
+├── daemon/                   # Fluentd config and log file watcher
+│   ├── config.yaml
+│   ├── daemon.py
+│   ├── docker_run
+│   ├── etc/
+│   │   └── fluent.conf
+│   ├── fluent.conf
+│   └── logs/                  # Fluentd buffer and rotated runtime logs
+├── docs/
+│   └── assets/                # Documentation images
+├── scripts/                  # Core Python scripts
+│   ├── client.py
+│   ├── log_ingestion.py
+│   ├── main.py
+│   ├── rag_chain.py
+│   ├── text_utils.py
+│   └── vectorstore.py
+├── config/                   # Additional configuration
+├── consumer/                 # Consumer application
+├── frontend/                 # Frontend application
+├── tests/                    # Unit and integration tests
+├── operate.sh                # Starts Fluentd and Python processes
 ├── requirements.txt
 └── README.md
 ```

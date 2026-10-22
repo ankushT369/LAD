@@ -9,18 +9,19 @@ load_dotenv(find_dotenv())
 def qdrant_client():
     """Initialize and return a Qdrant client"""
     return QdrantClient(
-        os.getenv("QDRANT_HOST"),
+        os.getenv("QDRANT_HOST", "http://127.0.0.1:6333"),
         api_key=os.getenv("QDRANT_API_KEY"),
         prefer_grpc=True
     )
 
-def create_collection(client, collecion_name=None):
+def create_collection(client, collection_name=None):
     """
     Create a Qdrant collection if it does not exist already.
     Collection dimensions are set based on embedding size.
     """
-    if not collecion_name:
-        collection_name = os.getenv("QDRANT_COLLECTION_NAME")
+    collection_name = collection_name or os.getenv(
+        "QDRANT_COLLECTION_NAME", "log_anomalies"
+    )
 
     # check if collection exists
     collections = client.get_collections().collections

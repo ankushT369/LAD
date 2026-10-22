@@ -4,9 +4,9 @@
 import yaml
 import os
 import sys
-from inotify_simple import INotify, flags
+import time
 
-from fluent import sender, event
+from fluent import sender
 
 def load_config(config_path):
     with open(config_path, "r") as f:
@@ -14,13 +14,16 @@ def load_config(config_path):
     return data.get("logs", [])
 
 def tail_files(file_paths):
-    """Open files, seek to end, and return dict of file handles + watch descriptors."""
+    """Open files at their current end and track their inode for rotation checks."""
     handles = {}
     for path in file_paths:
         try:
-            fd = open(path, "r")
+            fd = open(path, "r", encoding="utf-8", errors="replace")
             fd.seek(0, os.SEEK_END)  # start at end (like tail -f)
-            handles[path] = fd
+            handles[path] = {
+                "fd": fd,
+                "inode": os.fstat(fd.fileno()).st_ino,
+            }
         except Exception as e:
             print(f"Error opening {path}: {e}", file=sys.stderr)
     return handles
@@ -32,31 +35,64 @@ def follow_logs(config_path):
         return
 
     # setup fluentd logger (read from config.yaml)
-    data = yaml.safe_load(open(config_path))
-    host, port = data.get("host", ["127.0.0.1", 24224])
-    sender.setup("myapp", host=host, port=int(port))
-
-    inotify = INotify()
-    watch_flags = flags.MODIFY
+    with open(config_path, "r") as f:
+        data = yaml.safe_load(f) or {}
+    fluentd_config = data.get("fluentd", {})
+    fluent_sender = sender.FluentSender(
+        "myapp",
+        host=fluentd_config.get("host", "127.0.0.1"),
+        port=int(fluentd_config.get("port", 24224)),
+    )
 
     # Open and watch files
     handles = tail_files(log_files)
-    wd_map = {}  # map wd → file path
-    for path, fd in handles.items():
-        wd = inotify.add_watch(path, watch_flags)
-        wd_map[wd] = (path, fd)
+    if not handles:
+        print("No configured log files could be opened.", file=sys.stderr)
+        fluent_sender.close()
+        return
 
-    print("Watching logs... (Ctrl+C to exit)")
-    while True:
-        for event_ in inotify.read():
-            path, fd = wd_map[event_.wd]
-            if flags.MODIFY in flags.from_mask(event_.mask):
-                for line in fd:
+    print("Watching logs... (Ctrl+C to exit)", flush=True)
+    try:
+        while True:
+            for path, state in handles.items():
+                fd = state["fd"]
+                try:
+                    path_stat = os.stat(path)
+                except FileNotFoundError:
+                    continue
+
+                if path_stat.st_ino != state["inode"]:
+                    fd.close()
+                    fd = open(path, "r", encoding="utf-8", errors="replace")
+                    state["fd"] = fd
+                    state["inode"] = path_stat.st_ino
+                    print(f"Detected log rotation: {path}", flush=True)
+                elif path_stat.st_size < fd.tell():
+                    fd.seek(0)
+                    print(f"Detected log truncation: {path}", flush=True)
+
+                line = fd.readline()
+                while line:
                     log_line = line.strip()
                     if log_line:
-                        # Send to fluentd
-                        event.Event("log", {"file": path, "message": log_line})
-                        print(f"Sent to Fluentd: [{path}] {log_line}")
+                        sent = fluent_sender.emit(
+                            "log", {"file": path, "message": log_line}
+                        )
+                        if sent:
+                            print(f"Sent to Fluentd: [{path}] {log_line}", flush=True)
+                        else:
+                            print(
+                                f"Failed to send log to Fluentd: {fluent_sender.last_error}",
+                                file=sys.stderr,
+                                flush=True,
+                            )
+                            fluent_sender.clear_last_error()
+                    line = fd.readline()
+            time.sleep(0.25)
+    finally:
+        fluent_sender.close()
+        for state in handles.values():
+            state["fd"].close()
 
 
 if __name__ == "__main__":

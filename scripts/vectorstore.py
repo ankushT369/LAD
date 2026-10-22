@@ -1,6 +1,6 @@
 import os
 from dotenv import load_dotenv,find_dotenv
-from langchain.vectorstores import Qdrant
+from langchain_community.vectorstores import Qdrant
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from qdrant_client import QdrantClient
 

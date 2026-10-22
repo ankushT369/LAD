@@ -80,6 +80,10 @@ LAD/
    Edit daemon/config.yaml to specify the log paths you want to monitor.
    Fluentd configuration is in daemon/fluent.conf.
 
+   Copy `.env.example` to `.env` and set `GOOGLE_API_KEY` to your Google AI
+   Studio API key. `operate.sh` starts a local Qdrant container automatically
+   unless `QDRANT_HOST` is set in the shell or `.env`.
+
 5. **Start services**
 
    ```bash

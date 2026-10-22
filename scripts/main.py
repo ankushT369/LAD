@@ -2,6 +2,7 @@ import os
 import glob
 import json
 import time
+import signal
 from datetime import datetime, timezone
 from client import qdrant_client, create_collection
 from vectorstore import get_vectorstore
@@ -46,13 +47,28 @@ if __name__ == "__main__":
     log_handles = {}
     dashboard_path = os.path.join(log_dir, "dashboard_events.jsonl")
     waiting_notice_shown = False
+    stopping = False
+
+    def request_stop(_signum, _frame):
+        global stopping
+        stopping = True
+
+    signal.signal(signal.SIGTERM, request_stop)
+    signal.signal(signal.SIGINT, request_stop)
+
+    # Files that existed before this worker started may contain old output. Start
+    # those at EOF, but read newly created Fluentd output files from byte zero:
+    # Fluentd can flush the first records before the next glob discovers a file.
+    known_files = set(glob.glob(os.path.join(log_dir, "data.log.*.log")))
     try:
         while True:
             log_files = glob.glob(os.path.join(log_dir, "data.log.*.log"))
             for log_file in log_files:
                 if log_file not in log_handles:
                     handle = open(log_file, "r", encoding="utf-8")
-                    handle.seek(0, os.SEEK_END)
+                    if log_file in known_files:
+                        handle.seek(0, os.SEEK_END)
+                    known_files.add(log_file)
                     log_handles[log_file] = handle
                     print(f"Following Fluentd output: {log_file}")
 
@@ -60,7 +76,7 @@ if __name__ == "__main__":
                 print("Waiting for Fluentd to write its first log record...")
                 waiting_notice_shown = True
 
-            for handle in log_handles.values():
+            for handle in list(log_handles.values()):
                 line = handle.readline()
                 while line:
                     line = line.strip()
@@ -92,15 +108,15 @@ if __name__ == "__main__":
 
                         save_event({})
                         print("New Fluentd record received; storing it in Qdrant...", flush=True)
-                        vector_store.add_texts([query], metadatas=[metadata])
-                        print("Log stored; searching Qdrant...", flush=True)
-                        results = vector_store.similarity_search_with_score(query, k=3)
-                        context = build_context(results)
-                        print("Qdrant search complete; asking Gemini for classification...", flush=True)
                         try:
+                            vector_store.add_texts([query], metadatas=[metadata])
+                            print("Log stored; searching Qdrant...", flush=True)
+                            results = vector_store.similarity_search_with_score(query, k=3)
+                            context = build_context(results)
+                            print("Qdrant search complete; asking Gemini for classification...", flush=True)
                             response = chain({"query": query, "context": context})
                         except Exception as exc:
-                            print(f"Gemini classification failed: {exc}", flush=True)
+                            print(f"Log analysis failed: {exc}", flush=True)
                             save_event({"status": "failed", "error": str(exc)})
                             line = handle.readline()
                             continue
@@ -120,6 +136,12 @@ if __name__ == "__main__":
                         print("\n=== Response ===")
                         print(response, flush=True)
                     line = handle.readline()
+            if stopping and all(
+                os.fstat(handle.fileno()).st_size <= handle.tell()
+                for handle in log_handles.values()
+            ):
+                print("Stop requested; all flushed Fluentd records are processed.", flush=True)
+                break
             time.sleep(0.25)
     except KeyboardInterrupt:
         print("\nKeyboardInterrupt detected. Exiting.")

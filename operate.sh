@@ -90,12 +90,21 @@ sleep "$DURATION"
 
 # === 8. Cleanup: stop processes ===
 echo "[INFO] Stopping processes..."
-kill $DAEMON_PID $MAIN_PID 2>/dev/null || true
+kill -TERM "$DAEMON_PID" 2>/dev/null || true
+wait "$DAEMON_PID" 2>/dev/null || true
+
+# Let Fluentd flush the daemon's final records before stopping its output plugin.
+sleep 2
 
 # === 9. Stop & remove Fluentd container ===
 echo "[INFO] Stopping Fluentd container..."
 docker stop fluentd >/dev/null 2>&1 || true
 docker rm fluentd >/dev/null 2>&1 || true
+
+# Ask the analysis worker to drain all flushed records, then wait for the current
+# embedding/classification request to finish before allowing cleanup to proceed.
+kill -TERM "$MAIN_PID" 2>/dev/null || true
+wait "$MAIN_PID" 2>/dev/null || true
 
 if [ "$STARTED_LOCAL_QDRANT" -eq 1 ]; then
   echo "[INFO] Stopping local Qdrant container..."

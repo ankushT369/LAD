@@ -2,10 +2,28 @@ import os
 import glob
 import json
 import time
+from datetime import datetime, timezone
 from client import qdrant_client, create_collection
 from vectorstore import get_vectorstore
 from text_utils import build_context
 from rag_chain import get_rag_chain
+
+
+def parse_classification(response):
+    """Decode the classifier JSON, including JSON wrapped in Markdown fences."""
+    text = str(response).strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+
+    classification = json.loads(text)
+    if not isinstance(classification, dict):
+        raise ValueError("Classifier response must be a JSON object")
+    return classification
 
 
 if __name__ == "__main__":
@@ -26,6 +44,7 @@ if __name__ == "__main__":
     # Follow the dated files written by the Fluentd file output plugin.
     log_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "daemon", "logs"))
     log_handles = {}
+    dashboard_path = os.path.join(log_dir, "dashboard_events.jsonl")
     waiting_notice_shown = False
     try:
         while True:
@@ -59,6 +78,19 @@ if __name__ == "__main__":
                             else "unknown",
                             "source": "live_log",
                         }
+                        event = {
+                            "id": f"{os.path.basename(handle.name)}:{handle.tell()}",
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                            "message": query,
+                            "file": metadata["file"],
+                            "status": "processing",
+                        }
+                        def save_event(update):
+                            event.update(update)
+                            with open(dashboard_path, "a", encoding="utf-8") as output:
+                                output.write(json.dumps(event, ensure_ascii=False) + "\n")
+
+                        save_event({})
                         print("New Fluentd record received; storing it in Qdrant...", flush=True)
                         vector_store.add_texts([query], metadatas=[metadata])
                         print("Log stored; searching Qdrant...", flush=True)
@@ -69,8 +101,22 @@ if __name__ == "__main__":
                             response = chain({"query": query, "context": context})
                         except Exception as exc:
                             print(f"Gemini classification failed: {exc}", flush=True)
+                            save_event({"status": "failed", "error": str(exc)})
                             line = handle.readline()
                             continue
+                        try:
+                            classification = parse_classification(response)
+                        except (TypeError, ValueError, json.JSONDecodeError):
+                            classification = {"explanation": str(response)}
+                        save_event({
+                            "status": "analyzed",
+                            "anomaly_detected": bool(classification.get("anomaly_detected", False)),
+                            "error_type": classification.get("error_type", "none"),
+                            "suggested_fix": classification.get("suggested_fix", "none"),
+                            "commands": classification.get("commands", []),
+                            "explanation": classification.get("explanation", ""),
+                            "confidence": classification.get("confidence", "unknown"),
+                        })
                         print("\n=== Response ===")
                         print(response, flush=True)
                     line = handle.readline()

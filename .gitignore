@@ -1,3 +1,4 @@
 .env
+daemon/logs/dashboard_events.jsonl
 __pycache__/
 *.py[cod]

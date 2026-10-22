@@ -98,3 +98,35 @@ The script will:
 - Run main.py to detect anomalies.
 
 - After the duration, stop everything and optionally clear logs.
+
+## Dashboard
+
+Start LAD with `./operate.sh <seconds>`, then open a second terminal and run:
+
+```bash
+venv/bin/python scripts/dashboard.py
+```
+
+Open [http://127.0.0.1:8080](http://127.0.0.1:8080) to see analyzed events,
+detected anomalies, the recent event stream, and Fluentd/Qdrant reachability.
+The dashboard refreshes every three seconds. It reads analysis results from
+`daemon/logs/dashboard_events.jsonl`; results appear as the pipeline processes
+new incoming log lines. Set `DASHBOARD_HOST` and `DASHBOARD_PORT` to change the
+local bind address and port.
+
+### Generate demo activity
+
+With Fluentd, Qdrant, and the analysis process running, send a repeatable burst
+of 48 synthetic events (including obvious timeout, disk, queue, and service
+failure examples) through Fluentd:
+
+```bash
+venv/bin/python scripts/demo_load.py
+```
+
+The default sends 16 records per burst, with one anomaly example every four
+records. The dashboard chart uses two-hour buckets over the last 24 hours, so
+the burst appears at the latest end of the chart. Adjust volume or pacing with
+`--count`, `--burst-size`, `--burst-gap`, and `--record-delay`. Gemini classifies
+each event as the normal pipeline processes it; classification speed depends on
+the configured API/model response time.

@@ -75,9 +75,13 @@ LAD/
    ```bash
    pip install -r requirements.txt
 
-4. **Configure Fluentd**
+4. **Configure Fluentd and log paths**
 
-   Edit daemon/config.yaml to specify the log paths you want to monitor.
+   Edit `daemon/config.yaml` and set the paths under the matching OS in
+   `logs_by_os`. The daemon detects macOS (`Darwin`) or Linux at startup and
+   uses that OS's list. The example config watches the Parallels log on macOS
+   and `/var/log/syslog` on Linux; replace these with log files present on
+   your machine. Linux system logs may require read permissions for your user.
    Fluentd configuration is in daemon/fluent.conf.
 
    Copy `.env.example` to `.env` and set `GOOGLE_API_KEY` to your Google AI

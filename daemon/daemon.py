@@ -3,6 +3,7 @@
 #!/usr/bin/env python3
 import yaml
 import os
+import platform
 import sys
 import time
 
@@ -10,8 +11,27 @@ from fluent import sender
 
 def load_config(config_path):
     with open(config_path, "r") as f:
-        data = yaml.safe_load(f)
-    return data.get("logs", [])
+        data = yaml.safe_load(f) or {}
+
+    # Prefer paths configured for this OS; keep the old `logs` key as a
+    # fallback so existing config files continue to work.
+    logs_by_os = data.get("logs_by_os", {})
+    operating_system = platform.system()
+    if operating_system in logs_by_os:
+        print(f"Detected operating system: {operating_system}")
+        return logs_by_os[operating_system] or []
+    if "logs" in data:
+        print(
+            f"No log paths configured for {operating_system}; "
+            "using the generic 'logs' list."
+        )
+        return data["logs"] or []
+    print(
+        f"No log paths configured for operating system {operating_system}. "
+        "Add it under 'logs_by_os' in the config file.",
+        file=sys.stderr,
+    )
+    return []
 
 def tail_files(file_paths):
     """Open files at their current end and track their inode for rotation checks."""

@@ -1,7 +1,10 @@
-# Config.yaml file contains the log file paths.
-
-logs:
-  - /Users/anishmondal/Library/Logs/parallels.log
+# The daemon selects the list matching platform.system() automatically.
+# Update these paths for the logs available on each machine.
+logs_by_os:
+  Darwin:
+    - /Users/anishmondal/Library/Logs/parallels.log
+  Linux:
+    - /var/log/syslog
 
 fluentd:
   host: 127.0.0.1

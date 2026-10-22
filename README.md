@@ -44,7 +44,9 @@ LAD/
 │   └── vectorstore.py
 ├── config/                   # Additional configuration
 ├── consumer/                 # Consumer application
-├── frontend/                 # Frontend application
+├── frontend/
+│   └── dashboard.html        # Local live dashboard
+├── index.html                # GitHub Pages project website
 ├── tests/                    # Unit and integration tests
 ├── operate.sh                # Starts Fluentd and Python processes
 ├── requirements.txt
@@ -117,6 +119,11 @@ The dashboard refreshes every three seconds. It reads analysis results from
 `daemon/logs/dashboard_events.jsonl`; results appear as the pipeline processes
 new incoming log lines. Set `DASHBOARD_HOST` and `DASHBOARD_PORT` to change the
 local bind address and port.
+
+The project overview website is `index.html` at the repository root and can be
+published with GitHub Pages using the repository root as the source. The live
+dashboard remains a local app because it depends on the running LAD processes
+and `/api/overview` endpoint.
 
 ### Generate demo activity
 

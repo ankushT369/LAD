@@ -58,7 +58,7 @@ class Handler(BaseHTTPRequestHandler):
             body = json.dumps(payload).encode()
             content_type = "application/json; charset=utf-8"
         else:
-            relative = "index.html" if path in ("/", "") else path.lstrip("/")
+            relative = "dashboard.html" if path in ("/", "") else path.lstrip("/")
             target = (WEB_DIR / relative).resolve()
             if WEB_DIR.resolve() not in target.parents and target != WEB_DIR.resolve():
                 self.send_error(404)

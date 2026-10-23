@@ -54,12 +54,17 @@ if __name__ == "__main__":
         stopping = True
 
     signal.signal(signal.SIGTERM, request_stop)
-    signal.signal(signal.SIGINT, request_stop)
+
+    def interrupt_now(_signum, _frame):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGINT, interrupt_now)
 
     # Files that existed before this worker started may contain old output. Start
     # those at EOF, but read newly created Fluentd output files from byte zero:
     # Fluentd can flush the first records before the next glob discovers a file.
     known_files = set(glob.glob(os.path.join(log_dir, "data.log.*.log")))
+    active_event = None
     try:
         while True:
             log_files = glob.glob(os.path.join(log_dir, "data.log.*.log"))
@@ -101,6 +106,7 @@ if __name__ == "__main__":
                             "file": metadata["file"],
                             "status": "processing",
                         }
+                        active_event = event
                         def save_event(update):
                             event.update(update)
                             with open(dashboard_path, "a", encoding="utf-8") as output:
@@ -118,6 +124,7 @@ if __name__ == "__main__":
                         except Exception as exc:
                             print(f"Log analysis failed: {exc}", flush=True)
                             save_event({"status": "failed", "error": str(exc)})
+                            active_event = None
                             line = handle.readline()
                             continue
                         try:
@@ -133,6 +140,7 @@ if __name__ == "__main__":
                             "explanation": classification.get("explanation", ""),
                             "confidence": classification.get("confidence", "unknown"),
                         })
+                        active_event = None
                         print("\n=== Response ===")
                         print(response, flush=True)
                     line = handle.readline()
@@ -144,7 +152,14 @@ if __name__ == "__main__":
                 break
             time.sleep(0.25)
     except KeyboardInterrupt:
-        print("\nKeyboardInterrupt detected. Exiting.")
+        print("\nKeyboardInterrupt detected. Stopping without draining queued logs.", flush=True)
+        if active_event is not None:
+            active_event.update({
+                "status": "failed",
+                "error": "Analysis interrupted by Ctrl+C.",
+            })
+            with open(dashboard_path, "a", encoding="utf-8") as output:
+                output.write(json.dumps(active_event, ensure_ascii=False) + "\n")
     finally:
         for handle in log_handles.values():
             handle.close()

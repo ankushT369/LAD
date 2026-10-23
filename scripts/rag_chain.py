@@ -1,5 +1,6 @@
 import os
 import re
+import time
 
 from dotenv import find_dotenv, load_dotenv
 from google import genai
@@ -9,6 +10,9 @@ load_dotenv(find_dotenv())
 
 MODELS = ("gemini-3.8-flash", "gemini-3.5-flash-lite")
 RETRYABLE_STATUS_CODES = {408, 429, 500, 502, 503, 504}
+CLASSIFICATION_TIMEOUT_SECONDS = float(os.getenv("GEMINI_CLASSIFICATION_TIMEOUT", "45"))
+CLASSIFICATION_POLL_INTERVAL_SECONDS = 2
+GEMINI_REQUEST_TIMEOUT_SECONDS = 5.0
 
 SYSTEM_INSTRUCTIONS = """
 You are a Site Reliability / Systems Assistant. Classify the supplied live log
@@ -56,12 +60,64 @@ RELATED LOG SNIPPETS:
                     model=model,
                     input=prompt,
                     system_instruction=SYSTEM_INSTRUCTIONS,
-                    store=False,
+                    # Gemini requires stored interactions for background execution.
+                    store=True,
                     generation_config={
                         "max_output_tokens": 500,
                         "thinking_level": "low",
                     },
+                    background=True,
+                    timeout=GEMINI_REQUEST_TIMEOUT_SECONDS,
                 )
+                print(
+                    f"Gemini interaction {interaction.id} started with {model}.",
+                    flush=True,
+                )
+                deadline = time.monotonic() + CLASSIFICATION_TIMEOUT_SECONDS
+                last_wait_notice = time.monotonic()
+                while interaction.status == "in_progress":
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        try:
+                            client.interactions.cancel(
+                                id=interaction.id,
+                                timeout=GEMINI_REQUEST_TIMEOUT_SECONDS,
+                            )
+                        except Exception as cancel_error:
+                            print(
+                                f"Could not cancel timed-out Gemini interaction: {cancel_error}",
+                                flush=True,
+                            )
+                        raise TimeoutError(
+                            f"Gemini classification exceeded "
+                            f"{CLASSIFICATION_TIMEOUT_SECONDS:g} seconds."
+                        )
+                    time.sleep(min(CLASSIFICATION_POLL_INTERVAL_SECONDS, remaining))
+                    interaction = client.interactions.get(
+                        id=interaction.id,
+                        timeout=GEMINI_REQUEST_TIMEOUT_SECONDS,
+                    )
+                    now = time.monotonic()
+                    if now - last_wait_notice >= 10:
+                        print(
+                            f"Gemini is still processing interaction {interaction.id} "
+                            f"({int(now - (deadline - CLASSIFICATION_TIMEOUT_SECONDS))}s elapsed).",
+                            flush=True,
+                        )
+                        last_wait_notice = now
+
+                if interaction.status != "completed":
+                    interaction_errors = getattr(interaction, "errors", None) or []
+                    details = "; ".join(
+                        f"{error.code or 'unknown'}: {error.message or 'no message'}"
+                        for error in interaction_errors
+                    )
+                    raise RuntimeError(
+                        f"Gemini interaction finished with status: {interaction.status}"
+                        + (f" ({details})" if details else " (no error details returned)")
+                    )
+                if not interaction.output_text:
+                    raise RuntimeError("Gemini completed without returning classification text.")
                 print(f"Gemini classification completed with {model}.", flush=True)
                 return interaction.output_text
             except Exception as exc:
@@ -75,12 +131,43 @@ RELATED LOG SNIPPETS:
                         status = int(status)
                     except (TypeError, ValueError):
                         status = None
-                retryable = status in RETRYABLE_STATUS_CODES or is_timeout
+                error_text = str(exc).lower()
+                retryable = status in RETRYABLE_STATUS_CODES or is_timeout or any(
+                    marker in error_text
+                    for marker in (
+                        "resource_exhausted",
+                        "rate limit",
+                        "overloaded",
+                        "temporarily unavailable",
+                        "service unavailable",
+                        "internal error",
+                    )
+                )
                 if not retryable or index == len(MODELS) - 1:
                     raise
+                if is_timeout:
+                    reason = "request timed out"
+                elif status is not None:
+                    reason = f"HTTP {status}"
+                else:
+                    reason = next(
+                        (
+                            marker
+                            for marker in (
+                                "resource_exhausted",
+                                "rate limit",
+                                "overloaded",
+                                "temporarily unavailable",
+                                "service unavailable",
+                                "internal error",
+                            )
+                            if marker in error_text
+                        ),
+                        "retryable server error",
+                    )
                 print(
                     f"Gemini {model} failed"
-                    f" ({'request timed out' if is_timeout else f'HTTP {status}'}); "
+                    f" ({reason}); "
                     f"trying fallback {MODELS[index + 1]}.",
                     flush=True,
                 )

@@ -93,7 +93,7 @@ LAD/
 5. **Start services**
 
    ```bash
-   ./operate.sh <seconds_to_run>
+   ./operate.sh [seconds_to_run]
 
 The script will:
 
@@ -103,11 +103,13 @@ The script will:
 
 - Run main.py to detect anomalies.
 
-- After the duration, stop everything and optionally clear logs.
+- With a duration, stop after that many seconds. Without one, run until you
+  press Ctrl+C. Both shutdown paths stop the services and drain flushed logs.
 
 ## Dashboard
 
-Start LAD with `./operate.sh <seconds>`, then open a second terminal and run:
+Start LAD with `./operate.sh` (or `./operate.sh <seconds>` for a timed run), then
+open a second terminal and run:
 
 ```bash
 venv/bin/python scripts/dashboard.py

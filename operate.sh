@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# === Usage check ===
-if [ $# -ne 1 ]; then
-  echo "Usage: $0 <seconds>"
+# === Optional duration ===
+if [ "$#" -gt 1 ]; then
+  echo "Usage: $0 [seconds]"
   exit 1
 fi
 
-DURATION=$1
+DURATION="${1:-}"
+if [ -n "$DURATION" ] && { ! [[ "$DURATION" =~ ^[0-9]+$ ]] || [ "$DURATION" -lt 1 ]; }; then
+  echo "Duration must be a positive whole number of seconds."
+  exit 1
+fi
 ROOT_DIR="$(pwd)"
 DAEMON_DIR="$ROOT_DIR/daemon"
 LOG_PATH="$DAEMON_DIR/logs/data.log"
@@ -18,6 +22,66 @@ VENV_BIN="$ROOT_DIR/venv/bin"
 PYTHON="$VENV_BIN/python"
 PIP="$VENV_BIN/pip"
 STARTED_LOCAL_QDRANT=0
+DAEMON_PID=""
+MAIN_PID=""
+TMP_RUN=""
+
+cleanup() {
+  local exit_status=$?
+  trap - EXIT INT TERM
+  echo "[INFO] Stopping processes..."
+  if [ -n "$DAEMON_PID" ]; then
+    kill -TERM "$DAEMON_PID" 2>/dev/null || true
+    wait "$DAEMON_PID" 2>/dev/null || true
+  fi
+
+  # Let Fluentd flush final records during normal/timed shutdown. Ctrl+C means
+  # stop promptly and leave queued records for a later run.
+  if [ "$exit_status" -ne 130 ] && [ "$exit_status" -ne 143 ]; then
+    sleep 2
+  fi
+
+  echo "[INFO] Stopping Fluentd container..."
+  docker stop fluentd >/dev/null 2>&1 || true
+  docker rm fluentd >/dev/null 2>&1 || true
+
+  # Drain flushed records on normal/timed shutdown. Ctrl+C interrupts the active
+  # request and skips the queue so the user can stop the service promptly.
+  if [ -n "$MAIN_PID" ]; then
+    if [ "$exit_status" -eq 130 ]; then
+      kill -INT "$MAIN_PID" 2>/dev/null || true
+    else
+      kill -TERM "$MAIN_PID" 2>/dev/null || true
+    fi
+    wait "$MAIN_PID" 2>/dev/null || true
+  fi
+
+  if [ "$STARTED_LOCAL_QDRANT" -eq 1 ]; then
+    echo "[INFO] Stopping local Qdrant container..."
+    docker stop qdrant >/dev/null 2>&1 || true
+  fi
+
+  if [ -n "$TMP_RUN" ]; then
+    rm -f "$TMP_RUN"
+  fi
+
+  # === Clear logs inside data.log (file or dir) ===
+  if [ -f "$LOG_PATH" ]; then
+    > "$LOG_PATH"
+    echo "[INFO] Cleared file: $LOG_PATH"
+  elif [ -d "$LOG_PATH" ]; then
+    rm -rf "$LOG_PATH"/* || true
+    echo "[INFO] Cleared directory contents: $LOG_PATH"
+  else
+    echo "[WARN] $LOG_PATH not found"
+  fi
+
+  echo "[INFO] Done."
+}
+
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # === 0. Prep fix for docker mount ===
 mkdir -p "$ETC_DIR"
@@ -43,6 +107,7 @@ sed \
 
 bash "$TMP_RUN"
 rm -f "$TMP_RUN"
+TMP_RUN=""
 
 # === 3. Start local Qdrant if the configured endpoint is the local default ===
 if [ -z "${QDRANT_HOST:-}" ] && [ -z "$(grep '^QDRANT_HOST=' "$ROOT_DIR/.env" 2>/dev/null || true)" ]; then
@@ -84,42 +149,14 @@ echo "[INFO] Starting main.py..."
 "$PYTHON" "$ROOT_DIR/scripts/main.py" "$DAEMON_DIR/config.yaml" &
 MAIN_PID=$!
 
-# === 7. Let everything run for N seconds ===
-echo "[INFO] Running for $DURATION seconds..."
-sleep "$DURATION"
-
-# === 8. Cleanup: stop processes ===
-echo "[INFO] Stopping processes..."
-kill -TERM "$DAEMON_PID" 2>/dev/null || true
-wait "$DAEMON_PID" 2>/dev/null || true
-
-# Let Fluentd flush the daemon's final records before stopping its output plugin.
-sleep 2
-
-# === 9. Stop & remove Fluentd container ===
-echo "[INFO] Stopping Fluentd container..."
-docker stop fluentd >/dev/null 2>&1 || true
-docker rm fluentd >/dev/null 2>&1 || true
-
-# Ask the analysis worker to drain all flushed records, then wait for the current
-# embedding/classification request to finish before allowing cleanup to proceed.
-kill -TERM "$MAIN_PID" 2>/dev/null || true
-wait "$MAIN_PID" 2>/dev/null || true
-
-if [ "$STARTED_LOCAL_QDRANT" -eq 1 ]; then
-  echo "[INFO] Stopping local Qdrant container..."
-  docker stop qdrant >/dev/null
-fi
-
-# === 10. Clear logs inside data.log (file or dir) ===
-if [ -f "$LOG_PATH" ]; then
-  > "$LOG_PATH"
-  echo "[INFO] Cleared file: $LOG_PATH"
-elif [ -d "$LOG_PATH" ]; then
-  rm -rf "$LOG_PATH"/* || true
-  echo "[INFO] Cleared directory contents: $LOG_PATH"
+# === 7. Run until the optional duration expires or the user presses Ctrl+C ===
+if [ -n "$DURATION" ]; then
+  echo "[INFO] Running for $DURATION seconds... (Ctrl+C to stop)"
+  sleep "$DURATION"
 else
-  echo "[WARN] $LOG_PATH not found"
+  echo "[INFO] Running until Ctrl+C..."
+  while true; do
+    sleep 3600 &
+    wait "$!" || true
+  done
 fi
-
-echo "[INFO] Done."

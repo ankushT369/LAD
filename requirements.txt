@@ -1,5 +1,6 @@
 fluent-logger
 google-genai
+groq
 langchain==0.3.27
 langchain-community
 langchain_google_genai==2.1.11

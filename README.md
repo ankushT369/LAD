@@ -3,7 +3,7 @@ Log Anomaly Detector (LAD): Real-time system for semantic log monitoring and ano
 
 # LAD — Log Anomaly Detector
 
-Real-time log monitoring & semantic anomaly detection using Fluentd, Qdrant, and Google Gemini embeddings.
+Real-time log monitoring and semantic anomaly detection using Fluentd and Qdrant, with configurable parallel Gemini and Groq analysis workers.
 
 ![Vector embedding search diagram](docs/assets/vector-embedding-search.webp)
 
@@ -15,7 +15,7 @@ LAD helps you continuously monitor log files and detect anomalies (errors, warni
 - Buffering them in live log files.  
 - Embedding log lines using semantic embeddings (Google Gemini).  
 - Storing embeddings in Qdrant vector database.  
-- Running similarity search + a prompt chain (RAG) to classify whether a log line is anomalous and suggest context/fix.  
+- Running similarity search + model workers to classify whether a log line is anomalous and suggest context/fix.
 
 --- 
 
@@ -86,8 +86,11 @@ LAD/
    your machine. Linux system logs may require read permissions for your user.
    Fluentd configuration is in daemon/fluent.conf.
 
-   Copy `.env.example` to `.env` and set `GOOGLE_API_KEY` to your Google AI
-   Studio API key. `operate.sh` starts a local Qdrant container automatically
+   Copy `.env.example` to `.env` and set `GOOGLE_API_KEY` for Gemini embeddings
+   and the Gemini analysis worker, and `GROQ_API_KEY` for the Groq analysis
+   worker. `ANALYSIS_WORKERS` defaults to one Gemini worker and one Groq worker;
+   each configured provider/model pair handles logs concurrently. A failed log
+   is retried by each other configured worker at most once. `operate.sh` starts a local Qdrant container automatically
    unless `QDRANT_HOST` is set in the shell or `.env`.
 
 5. **Start services**
@@ -118,8 +121,10 @@ venv/bin/python scripts/dashboard.py
 Open [http://127.0.0.1:8080](http://127.0.0.1:8080) to see analyzed events,
 detected anomalies, the recent event stream, and Fluentd/Qdrant reachability.
 The dashboard refreshes every three seconds. It reads analysis results from
-`daemon/logs/dashboard_events.jsonl`; results appear as the pipeline processes
-new incoming log lines. Set `DASHBOARD_HOST` and `DASHBOARD_PORT` to change the
+`daemon/logs/dashboard_events.jsonl`; queued and processing events show the
+assigned model, and completed events show the model that produced the result.
+Results appear as the pipeline processes new incoming log lines. Set
+`DASHBOARD_HOST` and `DASHBOARD_PORT` to change the
 local bind address and port.
 
 The project overview website is `index.html` at the repository root and can be

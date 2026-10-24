@@ -51,8 +51,12 @@ class Handler(BaseHTTPRequestHandler):
             payload = {
                 "events": events[:250],
                 "total": len(events),
-                "anomalies": sum(1 for event in events if event.get("anomaly_detected")),
-                "processing": sum(1 for event in events if event.get("status") == "processing"),
+                "analyzed": sum(1 for event in events if event.get("status") == "analyzed"),
+                "anomalies": sum(
+                    1 for event in events
+                    if event.get("status") == "analyzed" and event.get("anomaly_detected")
+                ),
+                "processing": sum(1 for event in events if event.get("status") in ("queued", "processing")),
                 "services": service_status(),
             }
             body = json.dumps(payload).encode()

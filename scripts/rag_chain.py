@@ -1,18 +1,10 @@
+"""Provider-specific log classifiers used by the analysis worker pool."""
 import os
-import re
-import time
-
 from dotenv import find_dotenv, load_dotenv
 from google import genai
 from google.genai import types
 
 load_dotenv(find_dotenv())
-
-MODELS = ("gemini-3.8-flash", "gemini-3.5-flash-lite")
-RETRYABLE_STATUS_CODES = {408, 429, 500, 502, 503, 504}
-CLASSIFICATION_TIMEOUT_SECONDS = float(os.getenv("GEMINI_CLASSIFICATION_TIMEOUT", "45"))
-CLASSIFICATION_POLL_INTERVAL_SECONDS = 2
-GEMINI_REQUEST_TIMEOUT_SECONDS = 5.0
 
 SYSTEM_INSTRUCTIONS = """
 You are a Site Reliability / Systems Assistant. Classify the supplied live log
@@ -33,145 +25,91 @@ Return only a JSON object with these keys:
 """
 
 
-def get_rag_chain():
-    api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise RuntimeError("Set GOOGLE_API_KEY in .env before starting anomaly detection.")
-
-    client = genai.Client(
-        api_key=api_key,
-        http_options=types.HttpOptions(
-            # Reserve time for the fallback model within operate.sh's run window.
-            timeout=25_000,
-            retry_options=types.HttpRetryOptions(attempts=1),
-        ),
-    )
-
-    def classify(inputs):
-        prompt = f"""LOG ENTRY TO ANALYZE:
+def _prompt(inputs):
+    return f"""LOG ENTRY TO ANALYZE:
 {inputs['query']}
 
 RELATED LOG SNIPPETS:
 {inputs['context'] or '(No related entries yet; classify the log entry itself.)'}
 """
-        for index, model in enumerate(MODELS):
-            try:
-                interaction = client.interactions.create(
+
+
+def get_analyzers():
+    """Return configured model workers as {worker_name: (model_id, callable)}.
+
+    Configure ANALYSIS_WORKERS as comma-separated provider/model pairs, for
+    example: gemini:gemini-3.8-flash,groq:qwen/qwen3.8-27b.
+    """
+    configured = os.getenv(
+        "ANALYSIS_WORKERS",
+        "gemini:gemini-3.8-flash,groq:qwen/qwen3.8-27b",
+    )
+    workers = {}
+    for item in configured.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        provider, separator, model = item.partition(":")
+        if not separator or not model.strip():
+            raise ValueError(f"Invalid ANALYSIS_WORKERS entry: {item!r}")
+        provider, model = provider.strip().lower(), model.strip()
+        worker_name = f"{provider}:{model}"
+
+        if provider == "gemini":
+            api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+            if not api_key:
+                raise RuntimeError("Set GOOGLE_API_KEY to enable the Gemini analysis worker.")
+            client = genai.Client(
+                api_key=api_key,
+                http_options=types.HttpOptions(
+                    timeout=60_000,
+                    retry_options=types.HttpRetryOptions(attempts=1),
+                ),
+            )
+
+            def classify_gemini(inputs, client=client, model=model):
+                result = client.models.generate_content(
                     model=model,
-                    input=prompt,
-                    system_instruction=SYSTEM_INSTRUCTIONS,
-                    # Gemini requires stored interactions for background execution.
-                    store=True,
-                    generation_config={
-                        "max_output_tokens": 500,
-                        "thinking_level": "low",
-                    },
-                    background=True,
-                    timeout=GEMINI_REQUEST_TIMEOUT_SECONDS,
+                    contents=_prompt(inputs),
+                    config=types.GenerateContentConfig(
+                        system_instruction=SYSTEM_INSTRUCTIONS,
+                        response_mime_type="application/json",
+                        max_output_tokens=500,
+                    ),
                 )
-                print(
-                    f"Gemini interaction {interaction.id} started with {model}.",
-                    flush=True,
-                )
-                deadline = time.monotonic() + CLASSIFICATION_TIMEOUT_SECONDS
-                last_wait_notice = time.monotonic()
-                while interaction.status == "in_progress":
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        try:
-                            client.interactions.cancel(
-                                id=interaction.id,
-                                timeout=GEMINI_REQUEST_TIMEOUT_SECONDS,
-                            )
-                        except Exception as cancel_error:
-                            print(
-                                f"Could not cancel timed-out Gemini interaction: {cancel_error}",
-                                flush=True,
-                            )
-                        raise TimeoutError(
-                            f"Gemini classification exceeded "
-                            f"{CLASSIFICATION_TIMEOUT_SECONDS:g} seconds."
-                        )
-                    time.sleep(min(CLASSIFICATION_POLL_INTERVAL_SECONDS, remaining))
-                    interaction = client.interactions.get(
-                        id=interaction.id,
-                        timeout=GEMINI_REQUEST_TIMEOUT_SECONDS,
-                    )
-                    now = time.monotonic()
-                    if now - last_wait_notice >= 10:
-                        print(
-                            f"Gemini is still processing interaction {interaction.id} "
-                            f"({int(now - (deadline - CLASSIFICATION_TIMEOUT_SECONDS))}s elapsed).",
-                            flush=True,
-                        )
-                        last_wait_notice = now
-
-                if interaction.status != "completed":
-                    interaction_errors = getattr(interaction, "errors", None) or []
-                    details = "; ".join(
-                        f"{error.code or 'unknown'}: {error.message or 'no message'}"
-                        for error in interaction_errors
-                    )
-                    raise RuntimeError(
-                        f"Gemini interaction finished with status: {interaction.status}"
-                        + (f" ({details})" if details else " (no error details returned)")
-                    )
-                if not interaction.output_text:
+                if not result.text:
                     raise RuntimeError("Gemini completed without returning classification text.")
-                print(f"Gemini classification completed with {model}.", flush=True)
-                return interaction.output_text
-            except Exception as exc:
-                is_timeout = isinstance(exc, TimeoutError) or "timed out" in str(exc).lower()
-                status = getattr(exc, "code", None) or getattr(exc, "status_code", None)
-                if status is None:
-                    match = re.search(r"\b(408|429|500|502|503|504)\b", str(exc))
-                    status = int(match.group(1)) if match else None
-                else:
-                    try:
-                        status = int(status)
-                    except (TypeError, ValueError):
-                        status = None
-                error_text = str(exc).lower()
-                retryable = status in RETRYABLE_STATUS_CODES or is_timeout or any(
-                    marker in error_text
-                    for marker in (
-                        "resource_exhausted",
-                        "rate limit",
-                        "overloaded",
-                        "temporarily unavailable",
-                        "service unavailable",
-                        "internal error",
-                    )
-                )
-                if not retryable or index == len(MODELS) - 1:
-                    raise
-                if is_timeout:
-                    reason = "request timed out"
-                elif status is not None:
-                    reason = f"HTTP {status}"
-                else:
-                    reason = next(
-                        (
-                            marker
-                            for marker in (
-                                "resource_exhausted",
-                                "rate limit",
-                                "overloaded",
-                                "temporarily unavailable",
-                                "service unavailable",
-                                "internal error",
-                            )
-                            if marker in error_text
-                        ),
-                        "retryable server error",
-                    )
-                print(
-                    f"Gemini {model} failed"
-                    f" ({reason}); "
-                    f"trying fallback {MODELS[index + 1]}.",
-                    flush=True,
-                )
+                return result.text
 
-        raise RuntimeError("No Gemini model was available for classification.")
+            workers[worker_name] = (model, classify_gemini)
+        elif provider == "groq":
+            api_key = os.getenv("GROQ_API_KEY")
+            if not api_key:
+                raise RuntimeError("Set GROQ_API_KEY to enable the Groq analysis worker.")
+            from groq import Groq
 
-    return classify
+            client = Groq(api_key=api_key, timeout=60.0, max_retries=0)
+
+            def classify_groq(inputs, client=client, model=model):
+                result = client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": SYSTEM_INSTRUCTIONS},
+                        {"role": "user", "content": _prompt(inputs)},
+                    ],
+                    response_format={"type": "json_object"},
+                    temperature=0.2,
+                    max_completion_tokens=500,
+                )
+                content = result.choices[0].message.content
+                if not content:
+                    raise RuntimeError("Groq completed without returning classification text.")
+                return content
+
+            workers[worker_name] = (model, classify_groq)
+        else:
+            raise ValueError(f"Unsupported analysis provider {provider!r}; use gemini or groq.")
+
+    if not workers:
+        raise RuntimeError("ANALYSIS_WORKERS must configure at least one model worker.")
+    return workers
